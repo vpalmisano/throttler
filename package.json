@@ -1,6 +1,6 @@
 {
   "name": "@vpalmisano/throttler",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "repository": {
     "type": "git",
     "url": "https://github.com/vpalmisano/throttler.git"
@@ -45,7 +45,8 @@
     "convict-format-with-validator": "^6.2.0",
     "change-case": "^4.1.2",
     "debug-level": "^3.1.4",
-    "json5": "^2.2.3"
+    "json5": "^2.2.3",
+    "word-wrap": "^1.2.5"
   },
   "devDependencies": {
     "@types/convict": "^6.1.6",
