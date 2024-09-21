@@ -131,9 +131,9 @@ export type ThrottleConfig = {
   sessions?: string
   /** The protocol to throttle. */
   protocol?: 'udp' | 'tcp'
-  /** The match expression used to filter packets. */
+  /** The match expression used to filter packets (https://man7.org/linux/man-pages/man8/tc-ematch.8.html). */
   match?: string
-  /** If true, a pcap file will be generated in /tmp/throttler-capture-<session>.pcap. */
+  /** If true, a pcap file will be generated in ```/tmp/throttler-capture-<session>.pcap```. */
   capture?: boolean
   /** The uplink throttle rules. */
   up?: ThrottleRule | ThrottleRule[]
