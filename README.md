@@ -1,6 +1,7 @@
 ![logo](media/logo.svg "Throttler")
 # Throttler
 [GitHub page](https://github.com/vpalmisano/throttler) | [Documentation](https://vpalmisano.github.io/throttler)
+
 A Linux tool that allows to apply network constraints to a single or a group of processes.
 
 ## Install
