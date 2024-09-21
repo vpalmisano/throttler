@@ -60,26 +60,24 @@ async function main(): Promise<void> {
   }
   registerExitHandler(() => stop())
 
-  for (const command of commands) {
-    const launcher = await throttleLauncher(
-      command.command,
-      getSessionThrottleIndex(command.session || 0),
-    )
+  for (const c of commands) {
+    const { session, command } = c
+    const index = getSessionThrottleIndex(session || 0)
+    const launcher = await throttleLauncher(command, index)
     try {
       const proc = spawn(launcher, {
         shell: true,
         stdio: ['ignore', 'ignore', 'ignore'],
+        detached: true,
       })
       proc.on('error', err => {
-        log.error(`Error running command "${command.command}": ${err}`)
+        log.error(`Error running command "${command}": ${err}`)
       })
       proc.once('exit', code => {
-        log.info(`Command "${command.command}" exited with code ${code}`)
+        log.info(`Command "${command}" exited with code ${code}`)
       })
     } catch (err: unknown) {
-      log.error(
-        `Error running command "${command.command}": ${(err as Error).stack}`,
-      )
+      log.error(`Error running command "${command}": ${(err as Error).stack}`)
     }
   }
 
@@ -89,24 +87,22 @@ async function main(): Promise<void> {
   }
 
   // Command line interface.
-  if (process.stdin && process.stdin.setRawMode) {
-    console.log('Press [q] to stop the throttler')
-    process.stdin.setRawMode(true)
-    process.stdin.resume()
-    process.stdin.on('data', async data => {
-      log.debug('[stdin]', data[0])
-      if (data[0] === 'q'.charCodeAt(0)) {
-        try {
-          await stop()
-        } catch (err: unknown) {
-          log.error(`stop error: ${(err as Error).stack}`)
-          process.exit(1)
-        }
-      } else {
-        console.log('Press [q] to stop the throttler')
+  console.log('Press [q] to stop the throttler')
+  process.stdin.setRawMode(true)
+  process.stdin.resume()
+  process.stdin.on('data', async data => {
+    log.debug('[stdin]', data[0])
+    if (data[0] === 'q'.charCodeAt(0)) {
+      try {
+        await stop()
+      } catch (err: unknown) {
+        log.error(`stop error: ${(err as Error).stack}`)
+        process.exit(1)
       }
-    })
-  }
+    } else {
+      console.log('Press [q] to stop the throttler')
+    }
+  })
 }
 
 if (require.main === module) {

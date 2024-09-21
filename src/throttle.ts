@@ -1,3 +1,4 @@
+import { spawn } from 'child_process'
 import fs from 'fs'
 import JSON5 from 'json5'
 import os from 'os'
@@ -15,6 +16,8 @@ const log = logger('throttler:throttle')
 let throttleConfig: ThrottleConfig[] | null = null
 
 const ruleTimeouts = new Set<NodeJS.Timeout>()
+
+const captureStops = new Map<number, () => Promise<void>>()
 
 const throttleCurrentValues = {
   up: new Map<
@@ -43,6 +46,8 @@ const throttleCurrentValues = {
 }
 
 async function cleanup(): Promise<void> {
+  await Promise.allSettled([...captureStops.values()].map(stop => stop()))
+  captureStops.clear()
   ruleTimeouts.forEach(timeoutId => clearTimeout(timeoutId))
   ruleTimeouts.clear()
   throttleCurrentValues.up.clear()
@@ -115,15 +120,24 @@ export type ThrottleRule = {
       { rate: 200000, delay: 100, loss: "5%", queue: 5, at: 60},
     ],
     up: { rate: 100000, delay: 50, queue: 5 },
+    capture: true,
   }
  * ```
  */
 export type ThrottleConfig = {
+  /** The network interface to throttle. If not specified, the default interface will be used. */
   device?: string
+  /** The sessions to throttle. It could be a single index ("0"), a range ("0-2") or a comma-separated list ("0,3,4"). */
   sessions?: string
+  /** The protocol to throttle. */
   protocol?: 'udp' | 'tcp'
+  /** The match expression used to filter packets. */
   match?: string
+  /** If true, a pcap file will be generated in /tmp/throttler-capture-<session>.pcap. */
+  capture?: boolean
+  /** The uplink throttle rules. */
   up?: ThrottleRule | ThrottleRule[]
+  /** The downlink throttle rules. */
   down?: ThrottleRule | ThrottleRule[]
 }
 
@@ -341,6 +355,9 @@ sudo -n tc filter add dev ${device} \
         config.match,
       )
     }
+    if (config.capture) {
+      captureStops.set(index, capturePackets(index, config.protocol))
+    }
     index++
   }
 }
@@ -458,4 +475,40 @@ exec sg ${group} -c ${wrapperPath}`,
   )
   await fs.promises.chmod(launcherPath, 0o755)
   return launcherPath
+}
+
+function capturePackets(index: number, protocol?: string): () => Promise<void> {
+  const mark = index + 1
+  const filePath = `/tmp/throttler-capture-${index}.pcap`
+  log.info(`Starting capture ${filePath}`)
+  const cmd = `#!/bin/bash
+sudo -n iptables -L INPUT | grep -q "nflog-group ${mark}" || sudo -n iptables -A INPUT ${protocol ? `-p ${protocol}` : ''} -m connmark --mark ${mark} -j NFLOG --nflog-group ${mark}
+sudo -n iptables -L OUTPUT | grep -q "nflog-group ${mark}" || sudo -n iptables -A OUTPUT ${protocol ? `-p ${protocol}` : ''} -m connmark --mark ${mark} -j NFLOG --nflog-group ${mark}
+exec sudo -n dumpcap -q -i nflog:${mark} -w ${filePath}
+`
+  const proc = spawn(cmd, {
+    shell: true,
+    stdio: ['ignore', 'ignore', 'pipe'],
+    detached: true,
+  })
+  let stderr = ''
+  proc.stderr.on('data', data => {
+    stderr += data
+  })
+  proc.on('error', err => {
+    log.error(`Error running command capturePackets ${err}: ${stderr}`)
+  })
+  proc.once('exit', code => {
+    log.info(`capturePackets exited with code ${code}: ${stderr}`)
+  })
+
+  const stop = async () => {
+    log.info(`Stopping capture ${filePath}`)
+    proc.kill('SIGINT')
+    await runShellCommand(`#!/bin/bash
+sudo -n iptables -D INPUT ${protocol ? `-p ${protocol}` : ''} -m connmark --mark ${mark} -j NFLOG --nflog-group ${mark}
+sudo -n iptables -D OUTPUT ${protocol ? `-p ${protocol}` : ''} -m connmark --mark ${mark} -j NFLOG --nflog-group ${mark}`)
+  }
+
+  return stop
 }
