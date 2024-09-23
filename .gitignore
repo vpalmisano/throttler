@@ -13,3 +13,4 @@ yarn-error.log
 .vscode
 build
 _docs
+*.pcap

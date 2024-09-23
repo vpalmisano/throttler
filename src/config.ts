@@ -63,6 +63,7 @@ Example: \
     sessions: '0-1',
     device: 'eth0',
     protocol: 'udp',
+    capture: 'capture.pcap',
     up: {
       rate: 1000,
       delay: 50,
@@ -75,15 +76,9 @@ Example: \
     ]
   }]
   \`\`\`
-The sessions field represents the sessions IDs range that will be affected by \
-the rule, e.g.: "0-10", "2,4" or simply "2". \
-The device, protocol, up, down fields are optional. When device is not set, the \
-default route device will be used. If protocol is specified ('udp' or 'tcp'), \
+The sessions field represents the sessions IDs range that will be affected by the rule, e.g.: "0-10", "2,4" or simply "2". \
+The device, protocol, up, down fields are optional. When device is not set, the default route device will be used. If protocol is specified ('udp' or 'tcp'), \
 only the packets with the specified protocol will be affected by the shaping rules. \
-When running as regular user, add the following sudo configuration:
-  \`\`\`
-%sudo ALL=(ALL) NOPASSWD: /usr/sbin/iptables,/usr/sbin/addgroup,/usr/sbin/adduser,/usr/sbin/tc,/usr/sbin/modprobe,/usr/sbin/ip,/usr/bin/dumpcap
-  \`\`\`
 \
 `,
     format: String,
