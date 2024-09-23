@@ -120,7 +120,7 @@ export type ThrottleRule = {
       { rate: 200000, delay: 100, loss: "5%", queue: 5, at: 60},
     ],
     up: { rate: 100000, delay: 50, queue: 5 },
-    capture: true,
+    capture: 'capture.pcap',
   }
  * ```
  */
@@ -133,8 +133,8 @@ export type ThrottleConfig = {
   protocol?: 'udp' | 'tcp'
   /** The match expression used to filter packets (https://man7.org/linux/man-pages/man8/tc-ematch.8.html). */
   match?: string
-  /** If true, a pcap file will be generated in ```/tmp/throttler-capture-<session>.pcap```. */
-  capture?: boolean
+  /** If set, the packets matching the provided session and protocol will be captured at that file location. */
+  capture?: string
   /** The uplink throttle rules. */
   up?: ThrottleRule | ThrottleRule[]
   /** The downlink throttle rules. */
@@ -356,7 +356,10 @@ sudo -n tc filter add dev ${device} \
       )
     }
     if (config.capture) {
-      captureStops.set(index, capturePackets(index, config.protocol))
+      captureStops.set(
+        index,
+        capturePackets(index, config.capture, config.protocol),
+      )
     }
     index++
   }
@@ -477,14 +480,17 @@ exec sg ${group} -c ${wrapperPath}`,
   return launcherPath
 }
 
-function capturePackets(index: number, protocol?: string): () => Promise<void> {
+function capturePackets(
+  index: number,
+  filePath: string,
+  protocol?: string,
+): () => Promise<void> {
   const mark = index + 1
-  const filePath = `/tmp/throttler-capture-${index}.pcap`
   log.info(`Starting capture ${filePath}`)
   const cmd = `#!/bin/bash
 sudo -n iptables -L INPUT | grep -q "nflog-group ${mark}" || sudo -n iptables -A INPUT ${protocol ? `-p ${protocol}` : ''} -m connmark --mark ${mark} -j NFLOG --nflog-group ${mark}
 sudo -n iptables -L OUTPUT | grep -q "nflog-group ${mark}" || sudo -n iptables -A OUTPUT ${protocol ? `-p ${protocol}` : ''} -m connmark --mark ${mark} -j NFLOG --nflog-group ${mark}
-exec sudo -n dumpcap -q -i nflog:${mark} -w ${filePath}
+exec dumpcap -q -i nflog:${mark} -w ${filePath}
 `
   const proc = spawn(cmd, {
     shell: true,
@@ -499,7 +505,11 @@ exec sudo -n dumpcap -q -i nflog:${mark} -w ${filePath}
     log.error(`Error running command capturePackets ${err}: ${stderr}`)
   })
   proc.once('exit', code => {
-    log.info(`capturePackets exited with code ${code}: ${stderr}`)
+    if (code) {
+      log.error(`capturePackets exited with code ${code}: ${stderr}`)
+    } else {
+      log.info(`capturePackets exited`)
+    }
   })
 
   const stop = async () => {
@@ -507,7 +517,8 @@ exec sudo -n dumpcap -q -i nflog:${mark} -w ${filePath}
     proc.kill('SIGINT')
     await runShellCommand(`#!/bin/bash
 sudo -n iptables -D INPUT ${protocol ? `-p ${protocol}` : ''} -m connmark --mark ${mark} -j NFLOG --nflog-group ${mark}
-sudo -n iptables -D OUTPUT ${protocol ? `-p ${protocol}` : ''} -m connmark --mark ${mark} -j NFLOG --nflog-group ${mark}`)
+sudo -n iptables -D OUTPUT ${protocol ? `-p ${protocol}` : ''} -m connmark --mark ${mark} -j NFLOG --nflog-group ${mark}
+`)
   }
 
   return stop

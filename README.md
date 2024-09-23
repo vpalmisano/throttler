@@ -11,6 +11,18 @@ echo '@vpalmisano:registry=https://npm.pkg.github.com' >> ~/.npmrc
 npm install -g @vpalmisano/throttler
 ```
 
+System configuration:
+```bash
+# Allow to run the required comamnds without password:
+echo "$(whoami) ALL=(ALL) NOPASSWD: $(which iptables),$(which addgroup),$(which adduser),$(which tc),$(which modprobe),$(which ip)" | sudo tee /etc/sudoers.d/throttler
+
+# Install wireshark and allow regular user to capture packets:
+sudo apt install -y wireshark
+sudo dpkg-reconfigure wireshark-common
+sudo usermod -a -G wireshark $(whoami)
+# Logout and login again
+```
+
 ## Examples
 Throttle all the traffic of a single process (e.g. firefox):
 ```bash
@@ -23,6 +35,6 @@ throttler \
 Throttle the udp traffic of a single process (e.g. firefox) and capture the packets:
 ```bash
 throttler \
-    --throttle-config '[{sessions:"0",protocol:"udp",capture:true,up:[{delay:50,loss:1,rate:2000}],down:[{delay:20,loss:1,rate:2000}]}]' \
+    --throttle-config '[{sessions:"0",protocol:"udp",capture:"capture.pcap",up:[{delay:50,loss:1,rate:2000}],down:[{delay:20,loss:1,rate:2000}]}]' \
     --command-config '[{session:0,command:"firefox https://meet.jit.si/"}]'
 ```
