@@ -49,8 +49,6 @@ async function main(): Promise<void> {
 
   const config = loadConfig(process.argv[2])
 
-  const commands = json5.parse(config.commandConfig) as Command[]
-
   await startThrottle(config.throttleConfig)
 
   const stop = async (): Promise<void> => {
@@ -60,6 +58,9 @@ async function main(): Promise<void> {
   }
   registerExitHandler(() => stop())
 
+  const commands = config.commandConfig
+    ? (json5.parse(config.commandConfig) as Command[])
+    : []
   for (const c of commands) {
     const { session, command } = c
     const index = getSessionThrottleIndex(session || 0)
