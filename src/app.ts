@@ -48,11 +48,15 @@ async function main(): Promise<void> {
   showHelpOrVersion()
 
   const config = loadConfig(process.argv[2])
+  const abortControllers = new Set<AbortController>()
 
   await startThrottle(config.throttleConfig)
 
   const stop = async (): Promise<void> => {
-    console.log('Exiting...')
+    log.info('Stopping...')
+    for (const controller of abortControllers) {
+      controller.abort('stop')
+    }
     await stopThrottle()
     process.exit(0)
   }
@@ -66,16 +70,24 @@ async function main(): Promise<void> {
     const index = getSessionThrottleIndex(session || 0)
     const launcher = await throttleLauncher(command, index)
     try {
+      const abort = new AbortController()
       const proc = spawn(launcher, {
-        shell: true,
-        stdio: ['ignore', 'ignore', 'ignore'],
-        detached: true,
+        shell: false,
+        stdio: ['ignore', 'ignore', 'pipe'],
+        detached: false,
+        signal: abort.signal,
+      })
+      abortControllers.add(abort)
+      proc.stderr.on('data', data => {
+        log.info('[stderr]', data.toString().trim())
       })
       proc.on('error', err => {
-        log.error(`Error running command "${command}": ${err}`)
+        if (err.message.startsWith('The operation was aborted')) return
+        log.error(`Error running command "${command}": ${(err as Error).stack}`)
       })
       proc.once('exit', code => {
-        log.info(`Command "${command}" exited with code ${code}`)
+        log.info(`Command "${command}" exited with code: ${code || 0}`)
+        abortControllers.delete(abort)
       })
     } catch (err: unknown) {
       log.error(`Error running command "${command}": ${(err as Error).stack}`)

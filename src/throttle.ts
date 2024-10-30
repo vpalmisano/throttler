@@ -395,6 +395,7 @@ export async function stopThrottle(): Promise<void> {
   try {
     log.debug('Stopping throttle')
     await cleanup()
+    log.debug('Stopping throttle done')
     throttleConfig = null
   } catch (err) {
     log.error(`Stop throttle error: ${(err as Error).stack}`)
@@ -455,9 +456,9 @@ export async function throttleLauncher(
     return executablePath
   }
   const mark = index + 1
-  const launcherPath = `/tmp/throttler-launcher-${mark}`
-  const wrapperPath = `/tmp/throttler-launcher-${mark}-wrapper`
-  const group = `throttler${mark}`
+  const launcherPath = `/tmp/throttler-launcher-${index}`
+  const wrapperPath = `/tmp/throttler-launcher-${index}-wrapper`
+  const group = `throttler${index}`
   await fs.promises.writeFile(
     launcherPath,
     `#!/bin/bash
