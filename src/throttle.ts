@@ -66,6 +66,7 @@ sudo -n tc qdisc del dev ifb0 root || true;
 sudo -n tc class del dev ifb0 root || true;
 sudo -n tc filter del dev ifb0 root || true;
 `)
+  await cleanupRules()
 }
 
 function calculateBufferedPackets(
@@ -131,7 +132,9 @@ export type ThrottleConfig = {
   sessions?: string
   /** The protocol to throttle. */
   protocol?: 'udp' | 'tcp'
-  /** The match expression used to filter packets (https://man7.org/linux/man-pages/man8/tc-ematch.8.html). */
+  /** An additional IPTables packet filter rule. */
+  filter?: string
+  /** An additional TC match expression used to filter packets (https://man7.org/linux/man-pages/man8/tc-ematch.8.html). */
   match?: string
   /** If set, the packets matching the provided session and protocol will be captured at that file location. */
   capture?: string
@@ -405,11 +408,10 @@ export async function stopThrottle(): Promise<void> {
 export function getSessionThrottleIndex(sessionId: number): number {
   if (!throttleConfig) return -1
 
-  for (const config of throttleConfig) {
+  for (const [index, config] of throttleConfig.entries()) {
     if (!config.sessions) {
       continue
     }
-    const index = throttleConfig.indexOf(config)
     try {
       if (config.sessions.includes('-')) {
         const [start, end] = config.sessions.split('-').map(Number)
@@ -452,22 +454,30 @@ export async function throttleLauncher(
   index: number,
 ): Promise<string> {
   log.debug(`throttleLauncher executablePath=${executablePath} index=${index}`)
-  if (index < 0) {
+  if (!throttleConfig || index < 0) {
     return executablePath
   }
+  const config = throttleConfig[index]
   const mark = index + 1
   const launcherPath = `/tmp/throttler-launcher-${index}`
   const wrapperPath = `/tmp/throttler-launcher-${index}-wrapper`
   const group = `throttler${index}`
+  const filters = `${config.protocol ? `-p ${config.protocol}` : ''}${config.filter ? ` ${config.filter}` : ''}`
   await fs.promises.writeFile(
     launcherPath,
     `#!/bin/bash
 getent group ${group} || sudo -n addgroup --system ${group}
 sudo -n adduser $USER ${group}
 
-sudo -n iptables -t mangle -L OUTPUT | grep -q "owner GID match ${group}" || sudo -n iptables -t mangle -A OUTPUT -m owner --gid-owner ${group} -j MARK --set-mark ${mark}
-sudo -n iptables -t mangle -L PREROUTING | grep -q "CONNMARK restore" || sudo -n iptables -t mangle -A PREROUTING -j CONNMARK --restore-mark
-sudo -n iptables -t mangle -L POSTROUTING | grep -q "CONNMARK save" || sudo -n iptables -t mangle -A POSTROUTING -j CONNMARK --save-mark
+rule=$(sudo -n iptables -t mangle -L OUTPUT --line-numbers | grep "owner GID match ${group}" | awk '{print $1}')
+if [ -n "$rule" ]; then
+  sudo -n iptables -t mangle -R OUTPUT \${rule} ${filters} -m owner --gid-owner ${group} -j MARK --set-mark ${mark}  
+else
+  sudo -n iptables -t mangle -I OUTPUT 1 ${filters} -m owner --gid-owner ${group} -j MARK --set-mark ${mark}
+fi
+
+sudo -n iptables -t mangle -L PREROUTING | grep -q "CONNMARK restore" || sudo -n iptables -t mangle -I PREROUTING 1 -j CONNMARK --restore-mark
+sudo -n iptables -t mangle -L POSTROUTING | grep -q "CONNMARK save" || sudo -n iptables -t mangle -I POSTROUTING 1 -j CONNMARK --save-mark
 
 cat <<EOF > ${wrapperPath}
 #!/bin/bash
@@ -479,6 +489,22 @@ exec sg ${group} -c ${wrapperPath}`,
   )
   await fs.promises.chmod(launcherPath, 0o755)
   return launcherPath
+}
+
+async function cleanupRules(): Promise<void> {
+  if (!throttleConfig?.length) return
+  log.debug(`cleanupRules (${throttleConfig.length})`)
+  try {
+    await runShellCommand(`\
+for i in $(seq 0 ${throttleConfig.length}); do
+  rule=$(sudo -n iptables -t mangle -L OUTPUT --line-numbers | grep "owner GID match throttler\${i}" | awk '{print $1}');
+  if [ -n "$rule" ]; then
+    sudo -n iptables -t mangle -D OUTPUT \${rule};
+  fi;
+done;`)
+  } catch (err) {
+    log.error(`cleanupRules error: ${(err as Error).stack}`)
+  }
 }
 
 function capturePackets(
