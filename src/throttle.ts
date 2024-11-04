@@ -132,6 +132,10 @@ export type ThrottleConfig = {
   sessions?: string
   /** The protocol to throttle. */
   protocol?: 'udp' | 'tcp'
+  /** A comma-separated list of source ports that will not be throttled. */
+  skipSourcePorts?: string
+  /** A comma-separated list of destination ports that will not be throttled. */
+  skipDestinationPorts?: string
   /** An additional IPTables packet filter rule. */
   filter?: string
   /** An additional TC match expression used to filter packets (https://man7.org/linux/man-pages/man8/tc-ematch.8.html). */
@@ -462,7 +466,10 @@ export async function throttleLauncher(
   const launcherPath = `/tmp/throttler-launcher-${index}`
   const wrapperPath = `/tmp/throttler-launcher-${index}-wrapper`
   const group = `throttler${index}`
-  const filters = `${config.protocol ? `-p ${config.protocol}` : ''}${config.filter ? ` ${config.filter}` : ''}`
+  const filters = `${config.protocol ? `-p ${config.protocol}` : ''}\
+${config.skipSourcePorts ? ` -m multiport ! --sports ${config.skipSourcePorts}` : ''}\
+${config.skipDestinationPorts ? ` -m multiport ! --dports ${config.skipDestinationPorts}` : ''}\
+${config.filter ? ` ${config.filter}` : ''}`
   await fs.promises.writeFile(
     launcherPath,
     `#!/bin/bash
