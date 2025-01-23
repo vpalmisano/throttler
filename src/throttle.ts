@@ -413,7 +413,7 @@ export function getSessionThrottleIndex(sessionId: number): number {
   if (!throttleConfig) return -1
 
   for (const [index, config] of throttleConfig.entries()) {
-    if (!config.sessions) {
+    if (config.sessions === undefined || config.sessions === '') {
       continue
     }
     try {
@@ -431,7 +431,9 @@ export function getSessionThrottleIndex(sessionId: number): number {
         return index
       }
     } catch (err) {
-      log.error(`getSessionThrottleId error: ${(err as Error).stack}`)
+      log.error(
+        `getSessionThrottleId sessionId=${sessionId} error: ${(err as Error).stack}`,
+      )
     }
   }
 
