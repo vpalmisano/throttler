@@ -11,7 +11,12 @@ import {
   stopThrottle,
   throttleLauncher,
 } from './throttle'
-import { logger, registerExitHandler, resolvePackagePath } from './utils'
+import {
+  getProcessChildren,
+  logger,
+  registerExitHandler,
+  resolvePackagePath,
+} from './utils'
 
 const log = logger('throttler')
 
@@ -48,14 +53,29 @@ async function main(): Promise<void> {
   showHelpOrVersion()
 
   const config = loadConfig(process.argv[2])
-  const abortControllers = new Set<AbortController>()
+  const pids = new Set<number>()
 
   await startThrottle(config.throttleConfig)
 
   const stop = async (): Promise<void> => {
     log.info('Stopping...')
-    for (const controller of abortControllers) {
-      controller.abort('stop')
+    for (const pid of pids) {
+      const childPids = await getProcessChildren(pid)
+      log.debug(`Killing process ${pid} and children: ${childPids}`)
+      try {
+        process.kill(pid, 'SIGKILL')
+      } catch (err: unknown) {
+        log.debug(`Error killing process ${pid}: ${(err as Error).stack}`)
+      }
+      for (const childPid of childPids) {
+        try {
+          process.kill(childPid, 'SIGKILL')
+        } catch (err: unknown) {
+          log.debug(
+            `Error killing child process ${childPid}: ${(err as Error).stack}`,
+          )
+        }
+      }
     }
     await stopThrottle()
     process.exit(0)
@@ -67,19 +87,21 @@ async function main(): Promise<void> {
     : []
   for (const c of commands) {
     const { session, command } = c
+    const shortName = command.split(' ')[0]
     const index = getSessionThrottleIndex(session || 0)
     const launcher = await throttleLauncher(command, index)
     try {
-      const abort = new AbortController()
       const proc = spawn(launcher, {
         shell: false,
-        stdio: ['ignore', 'ignore', 'pipe'],
+        stdio: ['ignore', 'pipe', 'pipe'],
         detached: false,
-        signal: abort.signal,
       })
-      abortControllers.add(abort)
+      if (proc.pid) pids.add(proc.pid)
+      proc.stdout.on('data', data => {
+        log.info(`[${shortName}][stdout]`, data.toString().trim())
+      })
       proc.stderr.on('data', data => {
-        log.info('[stderr]', data.toString().trim())
+        log.info(`[${shortName}][stderr]`, data.toString().trim())
       })
       proc.on('error', err => {
         if (err.message.startsWith('The operation was aborted')) return
@@ -87,7 +109,10 @@ async function main(): Promise<void> {
       })
       proc.once('exit', code => {
         log.info(`Command "${command}" exited with code: ${code || 0}`)
-        abortControllers.delete(abort)
+        if (proc.pid) pids.delete(proc.pid)
+        /* fs.promises.unlink(launcher).catch(err => {
+          log.warn(`Error unlinking "${launcher}": ${(err as Error).stack}`)
+        }) */
       })
     } catch (err: unknown) {
       log.error(`Error running command "${command}": ${(err as Error).stack}`)

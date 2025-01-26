@@ -466,7 +466,6 @@ export async function throttleLauncher(
   const config = throttleConfig[index]
   const mark = index + 1
   const launcherPath = `/tmp/throttler-launcher-${index}`
-  const wrapperPath = `/tmp/throttler-launcher-${index}-wrapper`
   const group = `throttler${index}`
   const filters = `${config.protocol ? `-p ${config.protocol}` : ''}\
 ${config.skipSourcePorts ? ` -m multiport ! --sports ${config.skipSourcePorts}` : ''}\
@@ -475,8 +474,8 @@ ${config.filter ? ` ${config.filter}` : ''}`
   await fs.promises.writeFile(
     launcherPath,
     `#!/bin/bash
-getent group ${group} || sudo -n addgroup --system ${group}
-sudo -n adduser $USER ${group}
+getent group ${group} >/dev/null || sudo -n addgroup --system ${group}
+sudo -n adduser $USER ${group} --quiet
 
 rule=$(sudo -n iptables -t mangle -L OUTPUT --line-numbers | grep "owner GID match ${group}" | awk '{print $1}')
 if [ -n "$rule" ]; then
@@ -488,13 +487,15 @@ fi
 sudo -n iptables -t mangle -L PREROUTING | grep -q "CONNMARK restore" || sudo -n iptables -t mangle -I PREROUTING 1 -j CONNMARK --restore-mark
 sudo -n iptables -t mangle -L POSTROUTING | grep -q "CONNMARK save" || sudo -n iptables -t mangle -I POSTROUTING 1 -j CONNMARK --save-mark
 
-cat <<EOF > ${wrapperPath}
-#!/bin/bash
-exec ${executablePath} $@
-EOF
-chmod +x ${wrapperPath}
+function stop() {
+  echo "Stopping throttler"
+}
+trap stop SIGINT SIGTERM
 
-exec sg ${group} -c ${wrapperPath}`,
+echo "running: ${executablePath} $@"
+exec newgrp ${group} <<EOF
+${executablePath} $@
+EOF`,
   )
   await fs.promises.chmod(launcherPath, 0o755)
   return launcherPath

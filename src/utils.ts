@@ -94,6 +94,7 @@ export async function getDefaultNetworkInterface(): Promise<string> {
 }
 
 export async function checkNetworkInterface(device: string): Promise<void> {
+  if (device === 'lo') return
   await runShellCommand(`ip route | grep -q "dev ${device}"`)
 }
 
@@ -220,3 +221,29 @@ SIGNALS.forEach(event =>
     process.exit(0)
   }),
 )
+
+export async function getProcessChildren(pid: number): Promise<number[]> {
+  log.debug(`getProcessChildren pid=${pid}`)
+  const pids = []
+  try {
+    const p = await runShellCommand(`pgrep -P ${pid}`)
+    for (const pid of p.stdout.trim().split('\n').map(Number)) {
+      pids.push(pid)
+      try {
+        const childPids = await getProcessChildren(pid)
+        for (const p of childPids) {
+          pids.push(p)
+        }
+      } catch (err) {
+        log.debug(
+          `Error getting process ${pid} children: ${(err as Error).message}`,
+        )
+      }
+    }
+  } catch (err) {
+    log.debug(
+      `Error getting process ${pid} children: ${(err as Error).message}`,
+    )
+  }
+  return pids
+}
