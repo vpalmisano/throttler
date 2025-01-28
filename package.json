@@ -35,7 +35,7 @@
     "start:dev": "tsc -b && node build/src/app.js",
     "test": "",
     "clean": "rm -rf throttler.js build _docs",
-    "lint": "eslint --resolve-plugins-relative-to path=. src",
+    "lint": "eslint src",
     "lint:fix": "yarn lint --fix",
     "docs": "tsc -b && node build/src/generate-config-docs.js && typedoc"
   },
