@@ -25,6 +25,7 @@
     "node": ">=16.0.0"
   },
   "scripts": {
+    "prepare": "tsc -b && webpack",
     "prepublishOnly": "yarn lint",
     "postversion": "git push && git push origin $(git tag | sort -V | tail -1)",
     "release:patch": "yarn && yarn docs && npm version patch && npm publish",
@@ -33,7 +34,6 @@
     "start": "node throttler.js",
     "start:dev": "tsc -b && node build/src/app.js",
     "test": "",
-    "build": "yarn lint && tsc -b && webpack",
     "clean": "rm -rf throttler.js build _docs",
     "lint": "eslint src",
     "lint:fix": "yarn lint --fix",
