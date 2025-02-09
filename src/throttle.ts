@@ -117,8 +117,8 @@ export type ThrottleRule = {
     sessions: "0-1",
     protocol: "udp",
     down: [
-      { rate: 1000000, delay: 50, loss: "0%", queue: 5 },
-      { rate: 200000, delay: 100, loss: "5%", queue: 5, at: 60},
+      { rate: 1000000, delay: 50, loss: 0, queue: 5 },
+      { rate: 200000, delay: 100, loss: 5, queue: 5, at: 60},
     ],
     up: { rate: 100000, delay: 50, queue: 5 },
     capture: 'capture.pcap',
