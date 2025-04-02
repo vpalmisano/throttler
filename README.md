@@ -6,8 +6,6 @@ A Linux tool that allows to apply network constraints to a single or a group of 
 
 ## Install
 ```bash
-echo '@vpalmisano:registry=https://npm.pkg.github.com' >> ~/.npmrc
-
 npm install -g @vpalmisano/throttler
 ```
 
