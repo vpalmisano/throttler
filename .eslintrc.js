@@ -43,11 +43,6 @@ module.exports = {
         'simple-import-sort/exports': 'error',
         'sort-imports': 'off',
         'import/order': 'off',
-        'unused-imports/no-unused-imports-ts': 'error',
-        'unused-imports/no-unused-vars-ts': [
-          'warn',
-          { argsIgnorePattern: '^_' },
-        ],
         '@typescript-eslint/no-unused-vars': [
           'error',
           { argsIgnorePattern: '^_' },
