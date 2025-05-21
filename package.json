@@ -70,7 +70,7 @@
     "ts-loader": "^9.5.2",
     "typedoc": "^0.28.4",
     "typescript": "^5.5.2",
-    "webpack": "^5.92.1",
+    "webpack": "^5.99.9",
     "webpack-cli": "^5.1.4",
     "webpack-node-externals": "^3.0.0",
     "yarn-upgrade-minor": "^1.0.13"
