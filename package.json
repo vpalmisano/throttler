@@ -68,7 +68,7 @@
     "prettier": "^3.6.1",
     "terser-webpack-plugin": "^5.3.10",
     "ts-loader": "^9.5.2",
-    "typedoc": "^0.28.5",
+    "typedoc": "^0.28.7",
     "typedoc-plugin-ga": "^1.0.5",
     "typescript": "^5.8.3",
     "webpack": "^5.99.9",
