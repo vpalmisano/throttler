@@ -56,7 +56,7 @@
     "@typescript-eslint/parser": "^5.62.0",
     "@vpalmisano/typedoc-cookie-consent": "^0.0.4",
     "@vpalmisano/typedoc-plugin-ga": "^1.0.6",
-    "eslint": "^8.57.0",
+    "eslint": "^9.30.1",
     "eslint-config-prettier": "^10.1.5",
     "eslint-config-standard": "^17.1.0",
     "eslint-import-resolver-typescript": "^4.4.4",
