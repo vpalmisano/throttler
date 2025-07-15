@@ -268,7 +268,7 @@ sudo -n tc filter add dev ${device} \
           }
         }
 
-        log.info(`applying rules on ${device} (${mark}): ${desc}`)
+        log.info(`applying rules on ${device} (${mark}): ${desc.trim()}`)
         const cmd = `\
 sudo -n tc qdisc change dev ${device} \
   parent 1:${handle} \
