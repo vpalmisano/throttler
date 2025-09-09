@@ -10,6 +10,7 @@ import {
   runShellCommand,
   toPrecision,
 } from './utils'
+import { EventEmitter } from 'events'
 
 const log = logger('throttler:throttle')
 
@@ -45,6 +46,14 @@ const throttleCurrentValues = {
   >(),
 }
 
+export const throttleNotifier = new EventEmitter()
+
+async function runShellCommandIfLinux(cmd: string, verbose = false): Promise<void> {
+  if (os.platform() === 'linux') {
+    await runShellCommand(cmd, verbose)
+  }
+}
+
 async function cleanup(): Promise<void> {
   await Promise.allSettled([...captureStops.values()].map(stop => stop()))
   captureStops.clear()
@@ -52,11 +61,12 @@ async function cleanup(): Promise<void> {
   ruleTimeouts.clear()
   throttleCurrentValues.up.clear()
   throttleCurrentValues.down.clear()
+  throttleNotifier.emit('change')
   let device = throttleConfig?.length ? throttleConfig[0].device : ''
   if (!device) {
     device = await getDefaultNetworkInterface()
   }
-  await runShellCommand(`\
+  await runShellCommandIfLinux(`\
 sudo -n tc qdisc del dev ${device} root || true;
 sudo -n tc class del dev ${device} || true;
 sudo -n tc filter del dev ${device} || true;
@@ -216,7 +226,7 @@ sudo -n tc filter add dev ${device} \
   flowid 1:${handle};
 `
       try {
-        await runShellCommand(cmd, true)
+        await runShellCommandIfLinux(cmd, true)
       } catch (err) {
         log.error(`error running "${cmd}": ${(err as Error).stack}`)
         throw err
@@ -277,7 +287,7 @@ sudo -n tc qdisc change dev ${device} \
         try {
           ruleTimeouts.delete(timeoutId)
 
-          await runShellCommand(cmd)
+          await runShellCommandIfLinux(cmd)
 
           throttleCurrentValues[direction].set(index, {
             rate: rate ? 1000 * rate : undefined,
@@ -285,6 +295,7 @@ sudo -n tc qdisc change dev ${device} \
             loss: loss || undefined,
             queue: limit || undefined,
           })
+          throttleNotifier.emit('change')
         } catch (err) {
           log.error(`error running "${cmd}": ${(err as Error).stack}`)
         }
@@ -312,7 +323,7 @@ async function start(): Promise<void> {
     device = await getDefaultNetworkInterface()
   }
 
-  await runShellCommand(
+  await runShellCommandIfLinux(
     `\
 set -e;
 
@@ -362,7 +373,7 @@ sudo -n tc filter add dev ${device} \
         config.match,
       )
     }
-    if (config.capture) {
+    if (config.capture && os.platform() === 'linux') {
       captureStops.set(
         index,
         capturePackets(index, config.capture, config.protocol),
@@ -377,9 +388,6 @@ sudo -n tc filter add dev ${device} \
  * @param config A JSON5 configuration parsed as {@link ThrottleConfig}.
  */
 export async function startThrottle(config: string): Promise<void> {
-  if (os.platform() !== 'linux') {
-    throw new Error('Throttle option is only supported on Linux')
-  }
   try {
     throttleConfig = JSON5.parse(config) as ThrottleConfig[]
     log.debug('Starting throttle with config:', throttleConfig)
@@ -396,9 +404,6 @@ export async function startThrottle(config: string): Promise<void> {
  * Stops the network throttle.
  */
 export async function stopThrottle(): Promise<void> {
-  if (os.platform() !== 'linux') {
-    throw new Error('Throttle option is only supported on Linux')
-  }
   try {
     log.debug('Stopping throttle')
     await cleanup()
@@ -505,7 +510,7 @@ async function cleanupRules(): Promise<void> {
   if (!throttleConfig?.length) return
   log.debug(`cleanupRules (${throttleConfig.length})`)
   try {
-    await runShellCommand(`\
+    await runShellCommandIfLinux(`\
 for i in $(seq 0 ${throttleConfig.length}); do
   rule=$(sudo -n iptables -t mangle -L OUTPUT --line-numbers | grep "owner GID match throttler\${i}" | awk '{print $1}');
   if [ -n "$rule" ]; then

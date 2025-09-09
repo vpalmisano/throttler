@@ -1,6 +1,7 @@
 import { spawn } from 'child_process'
 import fs from 'fs'
 import path from 'path'
+import os from 'os'
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 export const { Log } = require('debug-level')
@@ -87,6 +88,7 @@ export function toPrecision(value: number, precision = 3): string {
 }
 
 export async function getDefaultNetworkInterface(): Promise<string> {
+  if (os.platform() !== 'linux') return 'lo'
   const { stdout } = await runShellCommand(
     `ip route | awk '/default/ {print $5; exit}' | tr -d ''`,
   )
