@@ -1,4 +1,5 @@
 import { spawn } from 'child_process'
+import { EventEmitter } from 'events'
 import fs from 'fs'
 import JSON5 from 'json5'
 import os from 'os'
@@ -10,7 +11,6 @@ import {
   runShellCommand,
   toPrecision,
 } from './utils'
-import { EventEmitter } from 'events'
 
 const log = logger('throttler:throttle')
 
@@ -48,7 +48,10 @@ const throttleCurrentValues = {
 
 export const throttleNotifier = new EventEmitter()
 
-async function runShellCommandIfLinux(cmd: string, verbose = false): Promise<void> {
+async function runShellCommandIfLinux(
+  cmd: string,
+  verbose = false,
+): Promise<void> {
   if (os.platform() === 'linux') {
     await runShellCommand(cmd, verbose)
   }
