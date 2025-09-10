@@ -171,7 +171,7 @@ async function applyRules(
 ): Promise<void> {
   let rules = config[direction]
   if (!rules) return
-  log.info(
+  log.debug(
     `applyRules device=${device} index=${index} protocol=${protocol} match=${match} ${JSON.stringify(
       rules,
     )}`,
@@ -281,7 +281,7 @@ sudo -n tc filter add dev ${device} \
           }
         }
 
-        log.info(`applying rules on ${device} (${mark}): ${desc.trim()}`)
+        log.debug(`applying rules on ${device} (${mark}): ${desc.trim()}`)
         const cmd = `\
 sudo -n tc qdisc change dev ${device} \
   parent 1:${handle} \
@@ -531,7 +531,7 @@ function capturePackets(
   protocol?: string,
 ): () => Promise<void> {
   const mark = index + 1
-  log.info(`Starting capture ${filePath}`)
+  log.debug(`Starting capture ${filePath}`)
   const cmd = `#!/bin/bash
 sudo -n iptables -L INPUT | grep -q "nflog-group ${mark}" || sudo -n iptables -I INPUT 1 ${protocol ? `-p ${protocol}` : ''} -m connmark --mark ${mark} -j NFLOG --nflog-group ${mark}
 sudo -n iptables -L OUTPUT | grep -q "nflog-group ${mark}" || sudo -n iptables -I OUTPUT 1 ${protocol ? `-p ${protocol}` : ''} -m connmark --mark ${mark} -j NFLOG --nflog-group ${mark}
@@ -553,12 +553,12 @@ exec dumpcap -q -i nflog:${mark} -w ${filePath}
     if (code) {
       log.error(`capturePackets exited with code ${code}: ${stderr}`)
     } else {
-      log.info(`capturePackets exited`)
+      log.debug(`capturePackets exited`)
     }
   })
 
   const stop = async () => {
-    log.info(`Stopping capture ${filePath}`)
+    log.debug(`Stopping capture ${filePath}`)
     proc.kill('SIGINT')
     await runShellCommand(`#!/bin/bash
 sudo -n iptables -D INPUT ${protocol ? `-p ${protocol}` : ''} -m connmark --mark ${mark} -j NFLOG --nflog-group ${mark}
