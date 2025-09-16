@@ -536,6 +536,7 @@ function capturePackets(
   const cmd = `#!/bin/bash
 sudo -n iptables -L INPUT | grep -q "nflog-group ${mark}" || sudo -n iptables -I INPUT 1 ${protocol ? `-p ${protocol}` : ''} -m connmark --mark ${mark} -j NFLOG --nflog-group ${mark}
 sudo -n iptables -L OUTPUT | grep -q "nflog-group ${mark}" || sudo -n iptables -I OUTPUT 1 ${protocol ? `-p ${protocol}` : ''} -m connmark --mark ${mark} -j NFLOG --nflog-group ${mark}
+mkdir -p $(dirname ${filePath})
 exec dumpcap -q -i nflog:${mark} -w ${filePath}
 `
   const proc = spawn(cmd, {
