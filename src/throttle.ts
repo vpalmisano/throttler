@@ -198,7 +198,8 @@ async function applyRules(
       queue,
       at,
     } = rule
-    const limit = queue ?? calculateBufferedPackets(rate || 0, delay || 0)
+    const minQueue = calculateBufferedPackets(rate || 0, delay || 0)
+    const limit = Math.max(queue || 0, minQueue)
     const mark = index + 1
     const handle = index + 2
 
