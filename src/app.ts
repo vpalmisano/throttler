@@ -13,6 +13,7 @@ import {
 } from './throttle'
 import {
   getProcessChildren,
+  handleExitSignals,
   logger,
   registerExitHandler,
   resolvePackagePath,
@@ -51,6 +52,7 @@ type Command = {
 
 async function main(): Promise<void> {
   showHelpOrVersion()
+  handleExitSignals()
 
   const config = loadConfig(process.argv[2])
   const pids = new Set<number>()
