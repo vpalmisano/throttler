@@ -2,21 +2,25 @@ import { paramCase } from 'change-case'
 import { spawn } from 'child_process'
 import fs from 'fs'
 import json5 from 'json5'
+import readline from 'readline'
 import wrap from 'word-wrap'
 
 import { getConfigDocs, loadConfig } from './config'
 import {
+  applyThrottleRule,
   getSessionThrottleIndex,
+  getSessionThrottleValues,
+  getStats,
   startThrottle,
   stopThrottle,
   throttleLauncher,
 } from './throttle'
 import {
-  getProcessChildren,
   handleExitSignals,
   logger,
   registerExitHandler,
   resolvePackagePath,
+  runShellCommandIfLinux,
 } from './utils'
 
 const log = logger('throttler')
@@ -50,6 +54,84 @@ type Command = {
   session?: number
 }
 
+function showCliHelp(): void {
+  console.log(`Commands:
+  help              Show this help
+  quit, q, exit     Stop the throttler
+  status, s [session]  Show throttle values for a session (default: 0)
+  stats             Show network throttle statistics`)
+}
+
+async function handleCliCommand(line: string): Promise<boolean> {
+  const trimmed = line.trim()
+  if (!trimmed) return false
+
+  const [cmd, ...args] = trimmed.split(/\s+/)
+  switch (cmd.toLowerCase()) {
+    case 'q':
+    case 'quit':
+    case 'exit':
+      return true
+    case 'help':
+      showCliHelp()
+      break
+    case 'stats': {
+      console.log(await getStats())
+      break
+    }
+    case 's':
+    case 'status': {
+      const session = args[0] !== undefined ? parseInt(args[0], 10) : 0
+      if (!Number.isFinite(session)) {
+        console.log('Usage: status [session]')
+        break
+      }
+      const index = getSessionThrottleIndex(session)
+      if (index < 0) {
+        console.log(`No throttle rules for session ${session}`)
+        break
+      }
+      const up = getSessionThrottleValues(index, 'up')
+      const down = getSessionThrottleValues(index, 'down')
+      console.log(`Session ${session} (rule ${index}):`)
+      console.log('  up:', up)
+      console.log('  down:', down)
+      break
+    }
+    case 'apply': {
+      const index = args[0] !== undefined ? parseInt(args[0], 10) : 0
+      if (!Number.isFinite(index)) {
+        console.log('Usage: apply <index> <direction> <rule>')
+        break
+      }
+      const direction = args[1] !== undefined ? args[1].toLowerCase() : 'up'
+      if (direction !== 'up' && direction !== 'down') {
+        console.log('Usage: apply <index> <direction> <rule>')
+        break
+      }
+      const rule = args[2] !== undefined ? json5.parse(args[2]) : null
+      if (!rule) {
+        console.log('Usage: apply <index> <direction> <rule>')
+        break
+      }
+      try {
+        await applyThrottleRule(rule, index, direction as 'up' | 'down')
+      } catch (err: unknown) {
+        console.error(
+          `Error applying rule "${trimmed}": ${(err as Error).stack}`,
+        )
+        break
+      }
+      break
+    }
+    default:
+      console.log(
+        `Unknown command: ${cmd}. Type "help" for available commands.`,
+      )
+  }
+  return false
+}
+
 async function main(): Promise<void> {
   showHelpOrVersion()
   handleExitSignals()
@@ -59,24 +141,18 @@ async function main(): Promise<void> {
 
   await startThrottle(config.throttleConfig)
 
+  let cli: readline.Interface | undefined
+
   const stop = async (): Promise<void> => {
     log.info('Stopping...')
-    for (const pid of pids) {
-      const childPids = await getProcessChildren(pid)
-      log.debug(`Killing process ${pid} and children: ${childPids}`)
+    cli?.close()
+    cli = undefined
+    for (const c of commands) {
+      const index = getSessionThrottleIndex(c.session || 0)
       try {
-        process.kill(pid, 'SIGKILL')
+        await runShellCommandIfLinux(`pkill -2 -G throttler${index}`)
       } catch (err: unknown) {
-        log.debug(`Error killing process ${pid}: ${(err as Error).stack}`)
-      }
-      for (const childPid of childPids) {
-        try {
-          process.kill(childPid, 'SIGKILL')
-        } catch (err: unknown) {
-          log.debug(
-            `Error killing child process ${childPid}: ${(err as Error).stack}`,
-          )
-        }
+        log.error(`Error stopping throttler ${index}: ${(err as Error).stack}`)
       }
     }
     await stopThrottle()
@@ -112,9 +188,6 @@ async function main(): Promise<void> {
       proc.once('exit', code => {
         log.info(`Command "${command}" exited with code: ${code || 0}`)
         if (proc.pid) pids.delete(proc.pid)
-        /* fs.promises.unlink(launcher).catch(err => {
-          log.warn(`Error unlinking "${launcher}": ${(err as Error).stack}`)
-        }) */
       })
     } catch (err: unknown) {
       log.error(`Error running command "${command}": ${(err as Error).stack}`)
@@ -127,21 +200,30 @@ async function main(): Promise<void> {
   }
 
   // Command line interface.
-  console.log('Press [q] to stop the throttler')
-  process.stdin.setRawMode(true)
-  process.stdin.resume()
-  process.stdin.on('data', async data => {
-    log.debug('[stdin]', data[0])
-    if (data[0] === 'q'.charCodeAt(0)) {
+  cli = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    prompt: 'throttler> ',
+  })
+  showCliHelp()
+  cli.prompt()
+  cli.on('line', line => {
+    void (async () => {
+      cli?.pause()
       try {
-        await stop()
+        const shouldStop = await handleCliCommand(line)
+        if (shouldStop) {
+          await stop()
+        } else {
+          cli?.prompt()
+        }
       } catch (err: unknown) {
-        log.error(`stop error: ${(err as Error).stack}`)
-        process.exit(1)
+        log.error(`command error: ${(err as Error).stack}`)
+        cli?.prompt()
+      } finally {
+        cli?.resume()
       }
-    } else {
-      console.log('Press [q] to stop the throttler')
-    }
+    })()
   })
 }
 

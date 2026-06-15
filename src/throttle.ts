@@ -8,7 +8,7 @@ import {
   checkNetworkInterface,
   getDefaultNetworkInterface,
   logger,
-  runShellCommand,
+  runShellCommandIfLinux,
   toPrecision,
 } from './utils'
 
@@ -47,15 +47,6 @@ const throttleCurrentValues = {
 }
 
 export const throttleNotifier = new EventEmitter()
-
-async function runShellCommandIfLinux(
-  cmd: string,
-  verbose = false,
-): Promise<void> {
-  if (os.platform() === 'linux') {
-    await runShellCommand(cmd, verbose)
-  }
-}
 
 async function cleanup(): Promise<void> {
   await Promise.allSettled([...captureStops.values()].map(stop => stop()))
@@ -161,6 +152,107 @@ export type ThrottleConfig = {
   down?: ThrottleRule | ThrottleRule[]
 }
 
+function applyRule(
+  rule: ThrottleRule,
+  device: string,
+  index: number,
+  direction: 'up' | 'down',
+): void {
+  const {
+    rate,
+    delay,
+    delayJitter,
+    delayJitterCorrelation,
+    delayDistribution,
+    reorder,
+    reorderCorrelation,
+    reorderGap,
+    loss,
+    lossBurst,
+    queue,
+    at,
+  } = rule
+
+  log.debug(
+    `applyRule device=${device} index=${index} direction=${direction} rule=${JSON.stringify(rule)}`,
+  )
+
+  const minQueue = calculateBufferedPackets(rate || 0, delay || 0)
+  const limit = Math.max(queue || 0, minQueue)
+  const mark = index + 1
+  const handle = index + 2
+
+  let desc = ''
+
+  if (rate && rate > 0) {
+    desc += ` rate ${rate}kbit`
+  }
+
+  if (limit && limit > 0) {
+    desc += ` limit ${limit}`
+  }
+
+  if (delay && delay > 0) {
+    desc += ` delay ${delay}ms`
+    if (delayJitter && delayJitter > 0) {
+      desc += ` ${delayJitter}ms`
+      if (delayJitterCorrelation && delayJitterCorrelation > 0) {
+        desc += ` ${delayJitterCorrelation}`
+      }
+    }
+    if (delayDistribution) {
+      desc += ` distribution ${delayDistribution}`
+    }
+  }
+
+  if (loss && loss > 0) {
+    if (lossBurst && lossBurst > 0) {
+      const p = (100 * loss) / (lossBurst * (100 - loss))
+      const r = 100 / lossBurst
+      desc += ` loss gemodel ${toPrecision(p, 2)} ${toPrecision(r, 2)}`
+    } else {
+      desc += ` loss ${toPrecision(loss, 2)}%`
+    }
+  }
+
+  if (reorder && reorder > 0) {
+    desc += ` reorder ${toPrecision(reorder, 2)}%`
+    if (reorderCorrelation && reorderCorrelation > 0) {
+      desc += ` ${toPrecision(reorderCorrelation, 2)}`
+    }
+    if (reorderGap && reorderGap > 0) {
+      desc += ` gap ${reorderGap}`
+    }
+  }
+
+  const timeoutId = setTimeout(
+    async () => {
+      log.debug(`applying rules on ${device} (${mark}): ${desc.trim()}`)
+      ruleTimeouts.delete(timeoutId)
+      const cmd = `\
+sudo -n tc qdisc change dev ${device} \
+parent 1:${handle} \
+handle ${handle}: \
+netem ${desc}`
+      try {
+        await runShellCommandIfLinux(cmd)
+
+        throttleCurrentValues[direction].set(index, {
+          rate: rate ? 1000 * rate : undefined,
+          delay: delay || undefined,
+          loss: loss || undefined,
+          queue: limit || undefined,
+        })
+        throttleNotifier.emit('change')
+      } catch (err) {
+        log.error(`error running "${cmd}": ${(err as Error).stack}`)
+      }
+    },
+    (at || 0) * 1000,
+  )
+  ruleTimeouts.add(timeoutId)
+}
+
 async function applyRules(
   config: ThrottleConfig,
   direction: 'up' | 'down',
@@ -169,145 +261,53 @@ async function applyRules(
   protocol?: 'udp' | 'tcp',
   match?: string,
 ): Promise<void> {
-  let rules = config[direction]
-  if (!rules) return
   log.debug(
-    `applyRules device=${device} index=${index} protocol=${protocol} match=${match} ${JSON.stringify(
-      rules,
-    )}`,
+    `applyRules device=${device} index=${index} protocol=${protocol} match=${match}`,
   )
-  if (!Array.isArray(rules)) {
-    rules = [rules]
+
+  const mark = index + 1
+  const handle = index + 2
+
+  const matches = [`'meta(nf_mark eq ${mark})'`]
+  if (protocol === 'udp') {
+    matches.push("'cmp(u8 at 9 layer network eq 0x11)'")
+  } else if (protocol === 'tcp') {
+    matches.push("'cmp(u8 at 9 layer network eq 0x6)'")
   }
-  rules.sort((a, b) => {
-    return (a.at || 0) - (b.at || 0)
-  })
-
-  for (const [i, rule] of rules.entries()) {
-    const {
-      rate,
-      delay,
-      delayJitter,
-      delayJitterCorrelation,
-      delayDistribution,
-      reorder,
-      reorderCorrelation,
-      reorderGap,
-      loss,
-      lossBurst,
-      queue,
-      at,
-    } = rule
-    const minQueue = calculateBufferedPackets(rate || 0, delay || 0)
-    const limit = Math.max(queue || 0, minQueue)
-    const mark = index + 1
-    const handle = index + 2
-
-    if (i === 0) {
-      const matches = [`'meta(nf_mark eq ${mark})'`]
-      if (protocol === 'udp') {
-        matches.push("'cmp(u8 at 9 layer network eq 0x11)'")
-      } else if (protocol === 'tcp') {
-        matches.push("'cmp(u8 at 9 layer network eq 0x6)'")
-      }
-      if (match) {
-        matches.push(match)
-      }
-      const cmd = `\
+  if (match) {
+    matches.push(match)
+  }
+  const cmd = `\
 set -e;
 
 sudo -n tc class add dev ${device} parent 1: classid 1:${handle} htb rate 1Gbit ceil 1Gbit;
 
 sudo -n tc qdisc add dev ${device} \
-  parent 1:${handle} \
-  handle ${handle}: \
-  netem; \
+parent 1:${handle} \
+handle ${handle}: \
+netem; \
 
 sudo -n tc filter add dev ${device} \
-  parent 1: \
-  protocol ip \
-  basic match ${matches.join(' and ')} \
-  flowid 1:${handle};
+parent 1: \
+protocol ip \
+basic match ${matches.join(' and ')} \
+flowid 1:${handle};
 `
-      try {
-        await runShellCommandIfLinux(cmd, true)
-      } catch (err) {
-        log.error(`error running "${cmd}": ${(err as Error).stack}`)
-        throw err
-      }
-    }
+  try {
+    await runShellCommandIfLinux(cmd, true)
+  } catch (err) {
+    log.error(`error running "${cmd}": ${(err as Error).stack}`)
+    throw err
+  }
 
-    const timeoutId = setTimeout(
-      async () => {
-        let desc = ''
-
-        if (rate && rate > 0) {
-          desc += ` rate ${rate}kbit`
-        }
-
-        if (limit && limit > 0) {
-          desc += ` limit ${limit}`
-        }
-
-        if (delay && delay > 0) {
-          desc += ` delay ${delay}ms`
-          if (delayJitter && delayJitter > 0) {
-            desc += ` ${delayJitter}ms`
-            if (delayJitterCorrelation && delayJitterCorrelation > 0) {
-              desc += ` ${delayJitterCorrelation}`
-            }
-          }
-          if (delayDistribution) {
-            desc += ` distribution ${delayDistribution}`
-          }
-        }
-
-        if (loss && loss > 0) {
-          if (lossBurst && lossBurst > 0) {
-            const p = (100 * loss) / (lossBurst * (100 - loss))
-            const r = 100 / lossBurst
-            desc += ` loss gemodel ${toPrecision(p, 2)} ${toPrecision(r, 2)}`
-          } else {
-            desc += ` loss ${toPrecision(loss, 2)}%`
-          }
-        }
-
-        if (reorder && reorder > 0) {
-          desc += ` reorder ${toPrecision(reorder, 2)}%`
-          if (reorderCorrelation && reorderCorrelation > 0) {
-            desc += ` ${toPrecision(reorderCorrelation, 2)}`
-          }
-          if (reorderGap && reorderGap > 0) {
-            desc += ` gap ${reorderGap}`
-          }
-        }
-
-        log.debug(`applying rules on ${device} (${mark}): ${desc.trim()}`)
-        const cmd = `\
-sudo -n tc qdisc change dev ${device} \
-  parent 1:${handle} \
-  handle ${handle}: \
-  netem ${desc}`
-        try {
-          ruleTimeouts.delete(timeoutId)
-
-          await runShellCommandIfLinux(cmd)
-
-          throttleCurrentValues[direction].set(index, {
-            rate: rate ? 1000 * rate : undefined,
-            delay: delay || undefined,
-            loss: loss || undefined,
-            queue: limit || undefined,
-          })
-          throttleNotifier.emit('change')
-        } catch (err) {
-          log.error(`error running "${cmd}": ${(err as Error).stack}`)
-        }
-      },
-      (at || 0) * 1000,
-    )
-
-    ruleTimeouts.add(timeoutId)
+  let rules = config[direction]
+  if (!rules) return
+  if (!Array.isArray(rules)) {
+    rules = [rules]
+  }
+  rules.sort((a, b) => (a.at || 0) - (b.at || 0))
+  for (const rule of rules) {
+    applyRule(rule, device, index, direction)
   }
 }
 
@@ -357,26 +357,15 @@ sudo -n tc filter add dev ${device} \
 
   let index = 0
   for (const config of throttleConfig) {
-    if (config.up) {
-      await applyRules(
-        config,
-        'up',
-        device,
-        index,
-        config.protocol,
-        config.match,
-      )
-    }
-    if (config.down) {
-      await applyRules(
-        config,
-        'down',
-        'ifb0',
-        index,
-        config.protocol,
-        config.match,
-      )
-    }
+    await applyRules(config, 'up', device, index, config.protocol, config.match)
+    await applyRules(
+      config,
+      'down',
+      'ifb0',
+      index,
+      config.protocol,
+      config.match,
+    )
     if (config.capture && os.platform() === 'linux') {
       captureStops.set(
         index,
@@ -402,6 +391,18 @@ export async function startThrottle(config: string): Promise<void> {
     await stopThrottle()
     throw err
   }
+}
+
+export async function applyThrottleRule(
+  rule: ThrottleRule,
+  index: number,
+  direction: 'up' | 'down',
+): Promise<void> {
+  let device = direction === 'up' ? throttleConfig?.[0]?.device : 'ifb0'
+  if (!device) {
+    device = await getDefaultNetworkInterface()
+  }
+  applyRule(rule, device, index, direction)
 }
 
 /**
@@ -462,6 +463,68 @@ export function getSessionThrottleValues(
     return {}
   }
   return throttleCurrentValues[direction].get(index) || {}
+}
+
+async function getThrottleDevice(): Promise<string> {
+  let device = throttleConfig?.[0]?.device
+  if (!device) {
+    device = await getDefaultNetworkInterface()
+  }
+  return device
+}
+
+export async function getStats(): Promise<string> {
+  if (os.platform() !== 'linux') {
+    return ''
+  }
+
+  const device = await getThrottleDevice()
+  if (!device) {
+    return ''
+  }
+
+  const devices = device === 'ifb0' ? ['ifb0'] : [device, 'ifb0']
+  const sections: string[] = []
+
+  for (const dev of devices) {
+    sections.push(`=== ${dev} ===`)
+    sections.push('--- netem ---')
+    sections.push(
+      (
+        await runShellCommandIfLinux(
+          `sudo -n tc -s qdisc show dev ${dev} 2>&1 || true`,
+        )
+      ).stdout.trimEnd(),
+    )
+    sections.push('--- class ---')
+    sections.push(
+      (
+        await runShellCommandIfLinux(
+          `sudo -n tc -s class show dev ${dev} 2>&1 || true`,
+        )
+      ).stdout.trimEnd(),
+    )
+    sections.push('--- filter ---')
+    sections.push(
+      (
+        await runShellCommandIfLinux(
+          `sudo -n tc -s filter show dev ${dev} 2>&1 || true`,
+        )
+      ).stdout.trimEnd(),
+    )
+    if (dev !== 'ifb0') {
+      sections.push('--- filter (ingress) ---')
+      sections.push(
+        (
+          await runShellCommandIfLinux(
+            `sudo -n tc -s filter show dev ${dev} ingress 2>&1 || true`,
+          )
+        ).stdout.trimEnd(),
+      )
+    }
+  }
+
+  return sections.join('\n')
 }
 
 export async function throttleLauncher(
@@ -562,7 +625,7 @@ exec dumpcap -q -i nflog:${mark} -w ${filePath}
   const stop = async () => {
     log.debug(`Stopping capture ${filePath}`)
     proc.kill('SIGINT')
-    await runShellCommand(`#!/bin/bash
+    await runShellCommandIfLinux(`#!/bin/bash
 sudo -n iptables -D INPUT ${protocol ? `-p ${protocol}` : ''} -m connmark --mark ${mark} -j NFLOG --nflog-group ${mark}
 sudo -n iptables -D OUTPUT ${protocol ? `-p ${protocol}` : ''} -m connmark --mark ${mark} -j NFLOG --nflog-group ${mark}
 `)

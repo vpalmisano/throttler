@@ -252,3 +252,13 @@ export async function getProcessChildren(pid: number): Promise<number[]> {
   }
   return pids
 }
+
+export async function runShellCommandIfLinux(
+  cmd: string,
+  verbose = false,
+): Promise<{ stdout: string; stderr: string }> {
+  if (os.platform() === 'linux') {
+    return runShellCommand(cmd, verbose)
+  }
+  return { stdout: '', stderr: '' }
+}
